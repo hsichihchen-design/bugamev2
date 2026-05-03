@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import ccxt
+import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
@@ -10,7 +10,7 @@ import numpy as np
 # ==========================================
 st.set_page_config(page_title="ETH 模擬交易競賽戰情室", layout="wide", page_icon="🏆")
 
-# 你的 Google Sheets CSV 網址
+# Google Sheets CSV 網址
 GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTXKr7zhxm9ghhZnBKiX0WaUlHtXDd4ros3uIFjKHrf88ojtxxmc2klc0s5x2JD_QhgNHbnu7PEwCO3/pub?gid=1677608980&single=true&output=csv"
 
 # ==========================================
@@ -37,13 +37,33 @@ def load_and_clean_data(url):
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
-def fetch_binance_klines(symbol='ETH/USDT', timeframe='1h', limit=720):
-    exchange = ccxt.binance()
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    df_k = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df_k['timestamp'] = pd.to_datetime(df_k['timestamp'], unit='ms') + timedelta(hours=8)
-    df_k.set_index('timestamp', inplace=True)
-    return df_k
+def fetch_crypto_klines(symbol='ETH-USD', period='30d', interval='1h'):
+    """
+    使用 yfinance 替換 ccxt 以解決 Streamlit Cloud 地區封鎖問題
+    """
+    try:
+        # 獲取雅虎財經數據
+        df_k = yf.download(symbol, period=period, interval=interval, progress=False)
+        
+        if df_k.empty:
+            st.error("獲取 K 線資料為空，請檢查代碼或網路。")
+            return pd.DataFrame()
+
+        # 處理 yfinance 新版 MultiIndex 問題 (若有)
+        if isinstance(df_k.columns, pd.MultiIndex):
+            df_k.columns = df_k.columns.get_level_values(0)
+
+        # 統一欄位名稱為小寫，相容原有邏輯
+        df_k.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+        
+        # 時區對齊：轉換為台灣時間，並移除時區標示 (使其與 Google Sheets 解析的時間格式一致)
+        df_k.index = df_k.index.tz_convert('Asia/Taipei').tz_localize(None)
+        df_k.index.name = 'timestamp'
+        
+        return df_k
+    except Exception as e:
+        st.error(f"獲取市場數據失敗: {e}")
+        return pd.DataFrame()
 
 # ==========================================
 # 3. 撤單匹配邏輯
@@ -64,7 +84,7 @@ def process_cancellations(df):
     return df
 
 # ==========================================
-# 4. 核心回測引擎 (移植自 BUTT.py)
+# 4. 核心回測引擎
 # ==========================================
 def run_backtest(df_trades, df_kline):
     # 建立新欄位存放結果
@@ -127,14 +147,13 @@ def run_backtest(df_trades, df_kline):
     return df_trades
 
 # ==========================================
-# 5. UI 與 視覺化渲染 (移植自 BYRESULT01.py)
+# 5. UI 與 視覺化渲染
 # ==========================================
 st.title("🏆 ETH 模擬交易競賽戰情室")
 
 # 獲取與運算數據
 df_raw = load_and_clean_data(GOOGLE_SHEET_CSV_URL)
-#st.write("🔍 系統實際讀到的所有欄位名稱：", df_raw.columns.tolist())
-df_kline = fetch_binance_klines()
+df_kline = fetch_crypto_klines() # 使用新的數據獲取函數
 
 if not df_raw.empty and not df_kline.empty:
     # 處理數據
@@ -170,67 +189,68 @@ if not df_raw.empty and not df_kline.empty:
             "平均持倉時間": avg_duration_str
         })
     
-    df_leaderboard = pd.DataFrame(leaderboard_data).sort_values("淨勝分 (勝-負)", ascending=False).reset_index(drop=True)
-    st.dataframe(df_leaderboard, use_container_width=True)
+    if leaderboard_data:
+        df_leaderboard = pd.DataFrame(leaderboard_data).sort_values("淨勝分 (勝-負)", ascending=False).reset_index(drop=True)
+        st.dataframe(df_leaderboard, use_container_width=True)
     
     st.divider()
 
     # --- 模組 B：個人覆盤 Dashboard ---
     st.subheader("🔍 個人交易軌跡覆盤")
-    selected_user = st.selectbox("選擇要覆盤的參賽者：", users)
-    user_trades = df_result[df_result['參賽者'] == selected_user]
-    
-    # 繪製 Plotly K 線圖
-    fig = go.Figure(data=[go.Candlestick(
-        x=df_kline.index, open=df_kline['open'], high=df_kline['high'],
-        low=df_kline['low'], close=df_kline['close'], name="ETH/USDT 1H"
-    )])
-    
-    # 畫出使用者的進出場紀錄與區塊 (移植自 BYRESULT01.py)
-    for _, row in user_trades.iterrows():
-        if pd.notnull(row['實際進場時間']):
-            entry_t = row['實際進場時間']
-            exit_t = row['實際離場時間'] if pd.notnull(row['實際離場時間']) else df_kline.index[-1]
-            entry_p = row['進場價位']
-            direction = row['多/ 空']
-            result = row['最終結果']
-            reason = row.get('進場理由', '無')
-            
-            # 判斷顏色
-            if '勝' in result: box_color = "rgba(0, 255, 0, 0.2)"; border_color = "green"
-            elif '負' in result: box_color = "rgba(255, 0, 0, 0.2)"; border_color = "red"
-            else: box_color = "rgba(255, 255, 0, 0.2)"; border_color = "yellow" # 持倉中用黃色
-            
-            # 畫持倉區間框框
-            y_max, y_min = entry_p * 1.05, entry_p * 0.95 # 預設高度
-            mask = (df_kline.index >= entry_t) & (df_kline.index <= exit_t)
-            if not df_kline[mask].empty:
-                y_max, y_min = df_kline[mask]['high'].max(), df_kline[mask]['low'].min()
+    if len(users) > 0:
+        selected_user = st.selectbox("選擇要覆盤的參賽者：", users)
+        user_trades = df_result[df_result['參賽者'] == selected_user]
+        
+        # 繪製 Plotly K 線圖
+        fig = go.Figure(data=[go.Candlestick(
+            x=df_kline.index, open=df_kline['open'], high=df_kline['high'],
+            low=df_kline['low'], close=df_kline['close'], name="ETH/USDT 1H"
+        )])
+        
+        # 畫出使用者的進出場紀錄與區塊
+        for _, row in user_trades.iterrows():
+            if pd.notnull(row['實際進場時間']):
+                entry_t = row['實際進場時間']
+                exit_t = row['實際離場時間'] if pd.notnull(row['實際離場時間']) else df_kline.index[-1]
+                entry_p = row['進場價位']
+                direction = row['多/ 空']
+                result = row['最終結果']
+                reason = row.get('進場理由', '無')
                 
-            fig.add_shape(type="rect", x0=entry_t, y0=y_min, x1=exit_t, y1=y_max,
-                          line=dict(color=border_color, width=1.5), fillcolor=box_color)
-            
-            # 畫進場箭頭
-            symbol = 'triangle-up' if '多' in str(direction) else 'triangle-down'
-            arrow_color = 'green' if '多' in str(direction) else 'red'
-            fig.add_trace(go.Scatter(
-                x=[entry_t], y=[entry_p], mode='markers',
-                marker=dict(symbol=symbol, size=15, color=arrow_color, line=dict(width=1, color='white')),
-                name=f"{direction} ({entry_p})",
-                hovertemplate=f"結果: {result}<br>價位: {entry_p}<br>理由: {reason}<extra></extra>"
-            ))
+                # 判斷顏色
+                if '勝' in result: box_color = "rgba(0, 255, 0, 0.2)"; border_color = "green"
+                elif '負' in result: box_color = "rgba(255, 0, 0, 0.2)"; border_color = "red"
+                else: box_color = "rgba(255, 255, 0, 0.2)"; border_color = "yellow"
+                
+                # 畫持倉區間框框
+                y_max, y_min = entry_p * 1.05, entry_p * 0.95 
+                mask = (df_kline.index >= entry_t) & (df_kline.index <= exit_t)
+                if not df_kline[mask].empty:
+                    y_max, y_min = df_kline[mask]['high'].max(), df_kline[mask]['low'].min()
+                    
+                fig.add_shape(type="rect", x0=entry_t, y0=y_min, x1=exit_t, y1=y_max,
+                              line=dict(color=border_color, width=1.5), fillcolor=box_color)
+                
+                # 畫進場箭頭
+                symbol = 'triangle-up' if '多' in str(direction) else 'triangle-down'
+                arrow_color = 'green' if '多' in str(direction) else 'red'
+                fig.add_trace(go.Scatter(
+                    x=[entry_t], y=[entry_p], mode='markers',
+                    marker=dict(symbol=symbol, size=15, color=arrow_color, line=dict(width=1, color='white')),
+                    name=f"{direction} ({entry_p})",
+                    hovertemplate=f"結果: {result}<br>價位: {entry_p}<br>理由: {reason}<extra></extra>"
+                ))
 
-    fig.update_layout(template="plotly_dark", height=600, margin=dict(l=20, r=20, t=40, b=20), hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(template="plotly_dark", height=600, margin=dict(l=20, r=20, t=40, b=20), hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.divider()
+        st.divider()
 
-    # --- 模組 C：詳細交易紀錄表 ---
-    st.subheader("📝 原始交易日誌")
-    display_cols = ['時間戳記', '參賽者', '多/ 空', '進場價位', '最終結果', '實際進場時間', '實際離場時間', '進場理由']
-    # 確保欄位存在才顯示，避免 KeyError
-    existing_cols = [c for c in display_cols if c in df_result.columns]
-    st.dataframe(user_trades[existing_cols], use_container_width=True)
+        # --- 模組 C：詳細交易紀錄表 ---
+        st.subheader("📝 原始交易日誌")
+        display_cols = ['時間戳記', '參賽者', '多/ 空', '進場價位', '最終結果', '實際進場時間', '實際離場時間', '進場理由']
+        existing_cols = [c for c in display_cols if c in df_result.columns]
+        st.dataframe(user_trades[existing_cols], use_container_width=True)
 
 else:
-    st.warning("數據讀取中或資料為空...")
+    st.warning("請等待市場數據讀取或確認 Google Sheet 來源有效。")

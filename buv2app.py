@@ -370,35 +370,7 @@ if not df_raw.empty and not df_kline.empty:
                 ))
 
         fig.update_layout(template="plotly_dark", height=600, margin=dict(l=20, r=20, t=40, b=20), hovermode="x unified")
-
-        # --- 數位法醫診斷區 ---
-        if not df_kline.empty:
-            st.subheader("🕵️ 數據連續性證據分析")
-            
-            # 1. 檢查 DataFrame 的索引是否連續
-            expected_range = pd.date_range(start=df_kline.index.min(), end=df_kline.index.max(), freq='h')
-            actual_range = df_kline.index
-            
-            missing_from_df = expected_range.difference(actual_range)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("DataFrame 總筆數", len(df_kline))
-                st.metric("理論應有筆數", len(expected_range))
-            
-            with col2:
-                if len(missing_from_df) == 0:
-                    st.success("✅ 證據 A：DataFrame 內部資料完全連續，沒有缺漏。")
-                else:
-                    st.error(f"❌ 證據 A：DataFrame 缺少了 {len(missing_from_df)} 小時的資料。")
-                    st.write("缺失清單：", missing_from_df)
-
-            # 2. 檢查 Plotly 的 X 軸配置
-            st.write("📊 **視覺渲染參數檢查：**")
-            st.info(f"K線圖 X 軸類型: {fig.layout.xaxis.type if hasattr(fig.layout.xaxis, 'type') else '預設 (可能是 linear)'}")
-
         st.plotly_chart(fig, use_container_width=True)
-
         st.divider()
 
         # --- 模組 C：詳細交易紀錄表 ---

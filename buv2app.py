@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import re
 
+
 # ==========================================
 # 1. 系統參數設定區
 # ==========================================
@@ -167,14 +168,15 @@ def run_comprehensive_backtest(df_trades, df_kline):
                 df_trades.at[i, '最終結果'] = '撤單操作紀錄'
                 if active_trade_idx is not None:
                     active_row = df_trades.loc[active_trade_idx]
-                    # 精準匹配：必須是預掛單、尚未成交，且進場價位相同
+                    
+                    # 💡 核心優化：系統已限制「每人只能有一張有效單」。
+                    # 因此只要收到撤單指令，且當前有效單是「預掛中」，就直接無條件撤銷，移除脆弱的價格比對。
                     if ('預掛' in str(active_row['直接進場/預掛價格/撤單']) and 
-                        float(active_row['進場價位']) == float(row['進場價位']) and
                         df_trades.at[active_trade_idx, '最終結果'] in ['待處理', '未成交 (掛單中)']):
                         
                         df_trades.at[active_trade_idx, '最終結果'] = '已主動撤銷'
                         df_trades.at[active_trade_idx, '實際離場時間'] = current_time
-                        active_trade_idx = None # 撤單成功，釋放佔用
+                        active_trade_idx = None # 撤單成功，釋放系統佔用！
                 continue
 
             # (C) 處理下單請求 (盲點防護：防止重疊下單)

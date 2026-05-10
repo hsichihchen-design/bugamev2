@@ -290,11 +290,17 @@ if not df_raw.empty and not df_kline.empty:
         cancel_count = len(user_df[user_df['最終結果'].str.contains('撤銷', na=False)])
         holding_count = len(user_df[user_df['最終結果'].str.contains('持倉中', na=False)])
         
-        # 計算平均持倉時間
-        finished_trades = user_df[user_df['實際離場時間'].notnull()]
+        # 計算平均持倉時間 (加入雙重過濾與空值驗證防呆機制)
+        finished_trades = user_df[user_df['實際離場時間'].notnull() & user_df['實際進場時間'].notnull()]
+        
         if not finished_trades.empty:
             avg_duration = (finished_trades['實際離場時間'] - finished_trades['實際進場時間']).mean()
-            avg_duration_str = f"{avg_duration.components.days}天 {avg_duration.components.hours}小時"
+            
+            # 確保平均值不是 NaT 才提取天數與小時
+            if pd.notnull(avg_duration):
+                avg_duration_str = f"{avg_duration.components.days}天 {avg_duration.components.hours}小時"
+            else:
+                avg_duration_str = "無"
         else:
             avg_duration_str = "無"
 

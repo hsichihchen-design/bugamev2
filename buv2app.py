@@ -70,7 +70,7 @@ def fetch_crypto_klines(symbol='ETH-USD', period='30d', interval='1h'):
         df_k = df_k.sort_index()
 
         # 3. 確保索引沒有「微秒」級的偏移，統一對齊到整點
-        df_k.index = df_k.index.floor('H')
+        df_k.index = df_k.index.floor('h')
 
         
         return df_k

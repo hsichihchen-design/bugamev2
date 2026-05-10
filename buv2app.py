@@ -276,9 +276,8 @@ df_raw = load_and_clean_data(GOOGLE_SHEET_CSV_URL)
 df_kline = fetch_crypto_klines() # 使用新的數據獲取函數
 
 if not df_raw.empty and not df_kline.empty:
-    # 處理數據
-    df_processed = run_comprehensive_backtest(df_raw.copy())
-    df_result = run_backtest(df_processed, df_kline)
+    # 處理數據：傳入兩個參數，並直接將結果賦值給 df_result
+    df_result = run_comprehensive_backtest(df_raw.copy(), df_kline)
     
     # --- 模組 A：戰力排行榜 ---
     st.subheader("🔥 即時戰力排行榜")

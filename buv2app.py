@@ -116,7 +116,8 @@ def run_comprehensive_backtest(df_trades, df_kline):
                         actual_entry = t
                         break
 
-            if actual_entry is not None:
+            # 💡 核心修復點：必須使用 pd.notnull() 來精準判斷 Pandas 的 NaT 空值
+            if pd.notnull(actual_entry):
                 df_trades.at[idx, '實際進場時間'] = actual_entry
                 df_trades.at[idx, '最終結果'] = '持倉中'
             elif end_time >= expire_time:
@@ -167,16 +168,12 @@ def run_comprehensive_backtest(df_trades, df_kline):
             if '撤單' in action:
                 df_trades.at[i, '最終結果'] = '撤單操作紀錄'
                 if active_trade_idx is not None:
-                    active_row = df_trades.loc[active_trade_idx]
-                    
-                    # 💡 核心優化：系統已限制「每人只能有一張有效單」。
-                    # 因此只要收到撤單指令，且當前有效單是「預掛中」，就直接無條件撤銷，移除脆弱的價格比對。
-                    if ('預掛' in str(active_row['直接進場/預掛價格/撤單']) and 
-                        df_trades.at[active_trade_idx, '最終結果'] in ['待處理', '未成交 (掛單中)']):
-                        
+                    # 💡 防呆降維：只要主單狀態包含「未成交」或「待處理」，無條件撤單
+                    status = str(df_trades.at[active_trade_idx, '最終結果'])
+                    if '未成交' in status or '待處理' in status:
                         df_trades.at[active_trade_idx, '最終結果'] = '已主動撤銷'
                         df_trades.at[active_trade_idx, '實際離場時間'] = current_time
-                        active_trade_idx = None # 撤單成功，釋放系統佔用！
+                        active_trade_idx = None # 徹底釋放系統佔用
                 continue
 
             # (C) 處理下單請求 (盲點防護：防止重疊下單)

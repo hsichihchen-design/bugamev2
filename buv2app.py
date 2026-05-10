@@ -62,6 +62,17 @@ def fetch_crypto_klines(symbol='ETH-USD', period='30d', interval='1h'):
         df_k.index = df_k.index.tz_convert('Asia/Taipei').tz_localize(None)
         df_k.index.name = 'timestamp'
         
+        if df_k.index.duplicated().any():
+            st.warning(f"偵測到重複時間戳記：{df_k.index[df_k.index.duplicated()]}")
+            df_k = df_k[~df_k.index.duplicated(keep='first')] # 只保留第一筆，解決重疊
+
+        # 2. 強制重整索引順序 (避免時區轉換後順序混亂)
+        df_k = df_k.sort_index()
+
+        # 3. 確保索引沒有「微秒」級的偏移，統一對齊到整點
+        df_k.index = df_k.index.floor('H')
+
+        
         return df_k
     except Exception as e:
         st.error(f"獲取市場數據失敗: {e}")

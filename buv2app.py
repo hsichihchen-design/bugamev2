@@ -369,6 +369,7 @@ if not df_raw.empty and not df_kline.empty:
                 ))
 
         fig.update_layout(template="plotly_dark", height=600, margin=dict(l=20, r=20, t=40, b=20), hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 

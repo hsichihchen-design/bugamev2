@@ -62,16 +62,8 @@ def fetch_crypto_klines(symbol='ETH-USD', period='30d', interval='1h'):
         df_k.index = df_k.index.tz_convert('Asia/Taipei').tz_localize(None)
         df_k.index.name = 'timestamp'
         
-        if df_k.index.duplicated().any():
-            st.warning(f"偵測到重複時間戳記：{df_k.index[df_k.index.duplicated()]}")
-            df_k = df_k[~df_k.index.duplicated(keep='first')] # 只保留第一筆，解決重疊
 
-        # 2. 強制重整索引順序 (避免時區轉換後順序混亂)
-        df_k = df_k.sort_index()
-
-        # 3. 確保索引沒有「微秒」級的偏移，統一對齊到整點
-        df_k.index = df_k.index.floor('h')
-
+        
         
         return df_k
     except Exception as e:
@@ -377,6 +369,33 @@ if not df_raw.empty and not df_kline.empty:
                 ))
 
         fig.update_layout(template="plotly_dark", height=600, margin=dict(l=20, r=20, t=40, b=20), hovermode="x unified")
+
+        # --- 數位法醫診斷區 ---
+        if not df_kline.empty:
+            st.subheader("🕵️ 數據連續性證據分析")
+            
+            # 1. 檢查 DataFrame 的索引是否連續
+            expected_range = pd.date_range(start=df_kline.index.min(), end=df_kline.index.max(), freq='h')
+            actual_range = df_kline.index
+            
+            missing_from_df = expected_range.difference(actual_range)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("DataFrame 總筆數", len(df_kline))
+                st.metric("理論應有筆數", len(expected_range))
+            
+            with col2:
+                if len(missing_from_df) == 0:
+                    st.success("✅ 證據 A：DataFrame 內部資料完全連續，沒有缺漏。")
+                else:
+                    st.error(f"❌ 證據 A：DataFrame 缺少了 {len(missing_from_df)} 小時的資料。")
+                    st.write("缺失清單：", missing_from_df)
+
+            # 2. 檢查 Plotly 的 X 軸配置
+            st.write("📊 **視覺渲染參數檢查：**")
+            st.info(f"K線圖 X 軸類型: {fig.layout.xaxis.type if hasattr(fig.layout.xaxis, 'type') else '預設 (可能是 linear)'}")
+
         st.plotly_chart(fig, use_container_width=True)
 
         st.divider()

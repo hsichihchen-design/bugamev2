@@ -18,7 +18,7 @@ GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTXKr7zh
 # ==========================================
 # 2. 數據獲取與清洗引擎
 # ==========================================
-@st.cache_data(ttl=300)
+# @st.cache_data(ttl=300)
 def load_and_clean_data(url):
     try:
         df = pd.read_csv(url)
@@ -38,7 +38,7 @@ def load_and_clean_data(url):
         st.error(f"讀取 Google Sheets 失敗: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=600) # 既然起點固定，ttl 可以稍微拉長，節省資源
+# @st.cache_data(ttl=600) # 既然起點固定，ttl 可以稍微拉長，節省資源
 def fetch_crypto_klines(symbol='ETH-USD'):
     try:
         # 💡 使用固定起點，模擬測試腳本成功的路徑

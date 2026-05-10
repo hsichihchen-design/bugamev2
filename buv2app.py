@@ -38,37 +38,38 @@ def load_and_clean_data(url):
         st.error(f"讀取 Google Sheets 失敗: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=3600)
-def fetch_crypto_klines(symbol='ETH-USD', period='30d', interval='1h'):
-    """
-    使用 yfinance 替換 ccxt 以解決 Streamlit Cloud 地區封鎖問題
-    """
+@st.cache_data(ttl=600) # 既然起點固定，ttl 可以稍微拉長，節省資源
+def fetch_crypto_klines(symbol='ETH-USD'):
     try:
-        # 獲取雅虎財經數據
-        df_k = yf.download(symbol, period=period, interval=interval, progress=False)
+        # 💡 使用固定起點，模擬測試腳本成功的路徑
+        # 注意：我們不設 end，代表抓到「現在」為止
+        START_DATE = '2026-04-20' 
+        
+        df_k = yf.download(symbol, start=START_DATE, interval='1h', progress=False)
         
         if df_k.empty:
-            st.error("獲取 K 線資料為空，請檢查代碼或網路。")
             return pd.DataFrame()
 
-        # 處理 yfinance 新版 MultiIndex 問題 (若有)
+        # 1. 統一欄位名稱
         if isinstance(df_k.columns, pd.MultiIndex):
             df_k.columns = df_k.columns.get_level_values(0)
-
-        # 統一欄位名稱為小寫，相容原有邏輯
         df_k.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
-        
-        # 時區對齊：轉換為台灣時間，並移除時區標示 (使其與 Google Sheets 解析的時間格式一致)
-        df_k.index = df_k.index.tz_convert('Asia/Taipei').tz_localize(None)
-        df_k.index.name = 'timestamp'
-        
 
+        # 2. 時區處理 (UTC -> 台北)
+        df_k.index = df_k.index.tz_convert('Asia/Taipei').tz_localize(None)
         
+        # 3. 核心加固：強迫對齊時間格 (即使 API 漏給資料，格子也要在)
+        full_range = pd.date_range(start=df_k.index.min(), end=df_k.index.max(), freq='h')
+        df_k = df_k.reindex(full_range)
         
+        # 💡 數據分析師建議：不使用 ffill，保持 NaN，讓「證據分析」能抓出 API 缺漏
         return df_k
     except Exception as e:
-        st.error(f"獲取市場數據失敗: {e}")
+        st.error(f"數據抓取失敗: {e}")
         return pd.DataFrame()
+
+
+
 
 # ==========================================
 # 3. 撤單匹配邏輯
@@ -369,6 +370,33 @@ if not df_raw.empty and not df_kline.empty:
                 ))
 
         fig.update_layout(template="plotly_dark", height=600, margin=dict(l=20, r=20, t=40, b=20), hovermode="x unified")
+
+        # --- 數位法醫診斷區 ---
+        if not df_kline.empty:
+            st.subheader("🕵️ 數據連續性證據分析")
+            
+            # 1. 檢查 DataFrame 的索引是否連續
+            expected_range = pd.date_range(start=df_kline.index.min(), end=df_kline.index.max(), freq='h')
+            actual_range = df_kline.index
+            
+            missing_from_df = expected_range.difference(actual_range)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("DataFrame 總筆數", len(df_kline))
+                st.metric("理論應有筆數", len(expected_range))
+            
+            with col2:
+                if len(missing_from_df) == 0:
+                    st.success("✅ 證據 A：DataFrame 內部資料完全連續，沒有缺漏。")
+                else:
+                    st.error(f"❌ 證據 A：DataFrame 缺少了 {len(missing_from_df)} 小時的資料。")
+                    st.write("缺失清單：", missing_from_df)
+
+            # 2. 檢查 Plotly 的 X 軸配置
+            st.write("📊 **視覺渲染參數檢查：**")
+            st.info(f"K線圖 X 軸類型: {fig.layout.xaxis.type if hasattr(fig.layout.xaxis, 'type') else '預設 (可能是 linear)'}")
+
         st.plotly_chart(fig, use_container_width=True)
 
         st.divider()

@@ -4,7 +4,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
-
+import re
 
 # ==========================================
 # 1. 系統參數設定區

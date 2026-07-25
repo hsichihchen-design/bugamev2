@@ -112,13 +112,26 @@ def run_comprehensive_backtest(df_trades, df_kline):
 
         # 尋找進場
         if pd.isnull(actual_entry):
-            if is_direct:
-                actual_entry = klines.index[0] if not klines.empty else record_time
-            else:
-                for t, k in klines.iterrows():
-                    if k['low'] <= entry_price <= k['high']:
-                        actual_entry = t
-                        break
+            # 不論直接進場或預掛單，申報價格都必須實際被市場碰到
+            valid_klines = klines.dropna(subset=['low', 'high'])
+        
+            for t, k in valid_klines.iterrows():
+                if k['low'] <= entry_price <= k['high']:
+                    actual_entry = t
+                    break
+        
+            if pd.notnull(actual_entry):
+                df_trades.at[idx, '實際進場時間'] = actual_entry
+                df_trades.at[idx, '最終結果'] = '持倉中'
+        
+            elif end_time >= expire_time:
+                if is_direct:
+                    df_trades.at[idx, '最終結果'] = '未成交 (直接進場價未觸及)'
+                else:
+                    df_trades.at[idx, '最終結果'] = '已過期 (Expiry)'
+        
+                df_trades.at[idx, '實際離場時間'] = expire_time
+                return
 
             # 💡 核心修復點：必須使用 pd.notnull() 來精準判斷 Pandas 的 NaT 空值
             if pd.notnull(actual_entry):

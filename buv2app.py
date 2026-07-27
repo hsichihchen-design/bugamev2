@@ -121,7 +121,7 @@ def run_comprehensive_backtest(df_trades, df_kline):
                 validation_start = record_time - timedelta(hours=2)
                 validation_end = min(
                     up_to_time,
-                    record_time + timedelta(hours=1)
+                    record_time + timedelta(hours=2)
                 )
             else:
                 # 預掛單：只能從下單時間往後找，最多找到掛單效期

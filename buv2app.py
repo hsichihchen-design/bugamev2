@@ -203,7 +203,7 @@ def run_comprehensive_backtest(df_trades, df_kline):
             df_trades.at[i, '最終結果'] = '未成交 (掛單中)'
             if '直接進場' in action:
                 # 給予 1 小時的判定寬容度
-                df_trades.at[i, '過期時間'] = current_time + timedelta(hours=1) 
+                df_trades.at[i, '過期時間'] = current_time + timedelta(hours=48) 
             else:
                 # 動態提取天數 (Regex)
                 match = re.search(r'(\d+)天', action)

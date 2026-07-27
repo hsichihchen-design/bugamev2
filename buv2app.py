@@ -84,7 +84,7 @@ def run_comprehensive_backtest(df_trades, df_kline):
       驗證申報進場價是否合理曾被觸及。
     - 若有觸價，實際進場時間仍記錄「使用者回報時間」。
     - 若回報後 1 小時結束仍完全未觸價，才判定為
-      「未成交 (直接進場前後1小時未觸價)」。
+      「未成交 (直接進場前後2小時未觸價)」。
     """
     df_trades = df_trades.sort_values('時間戳記').copy().reset_index(drop=True)
     df_trades['實際進場時間'] = pd.NaT
@@ -161,7 +161,7 @@ def run_comprehensive_backtest(df_trades, df_kline):
                     direct_validation_end = record_time + timedelta(hours=1)
 
                     if up_to_time >= direct_validation_end:
-                        df_trades.at[idx, '最終結果'] = '未成交 (直接進場前後1小時未觸價)'
+                        df_trades.at[idx, '最終結果'] = '未成交 (直接進場前後2小時未觸價)'
                         df_trades.at[idx, '實際離場時間'] = direct_validation_end
                         return
 

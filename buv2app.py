@@ -118,7 +118,7 @@ def run_comprehensive_backtest(df_trades, df_kline):
 
             if is_direct:
                 # 直接進場：回報時間前後各 1 小時做價格合理性驗證
-                validation_start = record_time - timedelta(hours=1)
+                validation_start = record_time - timedelta(hours=2)
                 validation_end = min(
                     up_to_time,
                     record_time + timedelta(hours=1)

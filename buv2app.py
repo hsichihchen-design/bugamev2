@@ -77,8 +77,15 @@ def fetch_crypto_klines(symbol='ETH-USD'):
 def run_comprehensive_backtest(df_trades, df_kline):
     """
     整合撤單、過期判定與倉位上限的一體化回測引擎
+
+    直接進場規則：
+    - 使用者回報「直接進場」時，視為宣稱已在回報時間成交。
+    - 系統用「回報時間前 1 小時 ～ 回報時間後 1 小時」的市場價格，
+      驗證申報進場價是否合理曾被觸及。
+    - 若有觸價，實際進場時間仍記錄「使用者回報時間」。
+    - 若回報後 1 小時結束仍完全未觸價，才判定為
+      「未成交 (直接進場前後1小時未觸價)」。
     """
-    # 1. 初始化與排序
     df_trades = df_trades.sort_values('時間戳記').copy().reset_index(drop=True)
     df_trades['實際進場時間'] = pd.NaT
     df_trades['實際離場時間'] = pd.NaT
@@ -87,9 +94,9 @@ def run_comprehensive_backtest(df_trades, df_kline):
 
     users = df_trades['參賽者'].dropna().unique()
 
-    # 內部函數：推進時間線並結算有效訂單
     def update_active_trade(idx, up_to_time):
         row = df_trades.loc[idx]
+
         if row['最終結果'] not in ['未成交 (掛單中)', '待處理', '持倉中']:
             return
 
@@ -99,187 +106,269 @@ def run_comprehensive_backtest(df_trades, df_kline):
         sl = float(row['停損'])
         tp = float(row['停利'])
         direction = str(row['多/ 空']).strip()
-        is_direct = '直接進場' in str(row['直接進場/預掛價格/撤單'])
+        action = str(row['直接進場/預掛價格/撤單'])
+        is_direct = '直接進場' in action
 
         actual_entry = df_trades.at[idx, '實際進場時間']
 
-        # 定義 K 線搜尋區間
-        start_time = actual_entry if pd.notnull(actual_entry) else record_time
-        # 若尚未進場，搜尋至 up_to_time 與 過期時間 的較早者；若已進場，則搜尋至 up_to_time
-        end_time = min(up_to_time, expire_time) if pd.isnull(actual_entry) else up_to_time
-        
-        klines = df_kline[(df_kline.index >= start_time) & (df_kline.index <= end_time)]
-
-        # 尋找進場
+        # ==========================================================
+        # A. 尋找 / 驗證進場
+        # ==========================================================
         if pd.isnull(actual_entry):
-            # 不論直接進場或預掛單，申報價格都必須實際被市場碰到
+
+            if is_direct:
+                # 直接進場：回報時間前後各 1 小時做價格合理性驗證
+                validation_start = record_time - timedelta(hours=1)
+                validation_end = min(
+                    up_to_time,
+                    record_time + timedelta(hours=1)
+                )
+            else:
+                # 預掛單：只能從下單時間往後找，最多找到掛單效期
+                validation_start = record_time
+                validation_end = min(up_to_time, expire_time)
+
+            klines = df_kline[
+                (df_kline.index >= validation_start) &
+                (df_kline.index <= validation_end)
+            ]
+
             valid_klines = klines.dropna(subset=['low', 'high'])
-        
+
+            price_touched = False
+            touch_time = None
+
             for t, k in valid_klines.iterrows():
                 if k['low'] <= entry_price <= k['high']:
-                    actual_entry = t
+                    price_touched = True
+                    touch_time = t
                     break
-        
-            if pd.notnull(actual_entry):
-                df_trades.at[idx, '實際進場時間'] = actual_entry
-                df_trades.at[idx, '最終結果'] = '持倉中'
-        
-            elif end_time >= expire_time:
+
+            if price_touched:
                 if is_direct:
-                    df_trades.at[idx, '最終結果'] = '未成交 (直接進場價未觸及)'
+                    # K 線只是驗證申報價格合理性；
+                    # 真正進場時間仍記錄使用者的回報時間。
+                    actual_entry = record_time
                 else:
-                    df_trades.at[idx, '最終結果'] = '已過期 (Expiry)'
-        
-                df_trades.at[idx, '實際離場時間'] = expire_time
-                return
+                    # 預掛單以第一次觸價時間作為進場時間。
+                    actual_entry = touch_time
 
-            # 💡 核心修復點：必須使用 pd.notnull() 來精準判斷 Pandas 的 NaT 空值
-            if pd.notnull(actual_entry):
                 df_trades.at[idx, '實際進場時間'] = actual_entry
                 df_trades.at[idx, '最終結果'] = '持倉中'
-            elif end_time >= expire_time:
-                df_trades.at[idx, '最終結果'] = '已過期 (Expiry)'
-                df_trades.at[idx, '實際離場時間'] = expire_time
-                return # 過期則終止後續判定
 
-        # 尋找離場 (若有進場)
+            else:
+                if is_direct:
+                    direct_validation_end = record_time + timedelta(hours=1)
+
+                    if up_to_time >= direct_validation_end:
+                        df_trades.at[idx, '最終結果'] = '未成交 (直接進場前後1小時未觸價)'
+                        df_trades.at[idx, '實際離場時間'] = direct_validation_end
+                        return
+
+                    # 尚未走完驗證視窗，維持掛單中，之後繼續驗證
+                    df_trades.at[idx, '最終結果'] = '未成交 (掛單中)'
+                    return
+
+                else:
+                    if validation_end >= expire_time:
+                        df_trades.at[idx, '最終結果'] = '已過期 (Expiry)'
+                        df_trades.at[idx, '實際離場時間'] = expire_time
+                        return
+
+                    df_trades.at[idx, '最終結果'] = '未成交 (掛單中)'
+                    return
+
+        # ==========================================================
+        # B. 尋找離場
+        # ==========================================================
         if pd.notnull(df_trades.at[idx, '實際進場時間']):
             actual_entry = df_trades.at[idx, '實際進場時間']
-            exit_klines = df_kline[(df_kline.index > actual_entry) & (df_kline.index <= up_to_time)]
-            
+
+            exit_klines = df_kline[
+                (df_kline.index > actual_entry) &
+                (df_kline.index <= up_to_time)
+            ].dropna(subset=['low', 'high'])
+
             for t, k in exit_klines.iterrows():
                 hit_sl, hit_tp = False, False
+
                 if '空' in direction:
-                    if k['high'] >= sl: hit_sl = True
-                    if k['low'] <= tp: hit_tp = True
+                    if k['high'] >= sl:
+                        hit_sl = True
+                    if k['low'] <= tp:
+                        hit_tp = True
+
                 elif '多' in direction:
-                    if k['low'] <= sl: hit_sl = True
-                    if k['high'] >= tp: hit_tp = True
-                
+                    if k['low'] <= sl:
+                        hit_sl = True
+                    if k['high'] >= tp:
+                        hit_tp = True
+
                 if hit_sl or hit_tp:
                     df_trades.at[idx, '實際離場時間'] = t
-                    if hit_sl and hit_tp: df_trades.at[idx, '最終結果'] = '負 (插針雙殺算停損)'
-                    elif hit_sl: df_trades.at[idx, '最終結果'] = '負 (停損/SL)'
-                    elif hit_tp: df_trades.at[idx, '最終結果'] = '勝 (停利/TP)'
+
+                    if hit_sl and hit_tp:
+                        df_trades.at[idx, '最終結果'] = '負 (插針雙殺算停損)'
+                    elif hit_sl:
+                        df_trades.at[idx, '最終結果'] = '負 (停損/SL)'
+                    elif hit_tp:
+                        df_trades.at[idx, '最終結果'] = '勝 (停利/TP)'
+
                     break
 
-    # 2. 依序審核每位參賽者的行為軌跡
+    # 依序審核每位參賽者的行為軌跡
     for user in users:
         user_idx = df_trades[df_trades['參賽者'] == user].index
-        active_trade_idx = None # 記錄該參賽者當前「唯一有效」的單號
+        active_trade_idx = None
 
         for i in user_idx:
             row = df_trades.loc[i]
             current_time = row['時間戳記']
             action = str(row['直接進場/預掛價格/撤單'])
 
-            # (A) 推進歷史訂單狀態至現在時間
+            # 推進上一筆有效訂單
             if active_trade_idx is not None:
                 update_active_trade(active_trade_idx, current_time)
-                # 若更新後該單已結束 (平倉或過期)，則釋放佔用
+
                 status = df_trades.at[active_trade_idx, '最終結果']
                 if status not in ['未成交 (掛單中)', '待處理', '持倉中']:
                     active_trade_idx = None
 
-            # (B) 處理撤單請求
+            # 處理撤單
             if '撤單' in action:
                 df_trades.at[i, '最終結果'] = '撤單操作紀錄'
+
                 if active_trade_idx is not None:
-                    # 💡 防呆降維：只要主單狀態包含「未成交」或「待處理」，無條件撤單
                     status = str(df_trades.at[active_trade_idx, '最終結果'])
+
                     if '未成交' in status or '待處理' in status:
                         df_trades.at[active_trade_idx, '最終結果'] = '已主動撤銷'
                         df_trades.at[active_trade_idx, '實際離場時間'] = current_time
-                        active_trade_idx = None # 徹底釋放系統佔用
+                        active_trade_idx = None
+
                 continue
 
-            # (C) 處理下單請求 (盲點防護：防止重疊下單)
+            # 防止重疊下單
             if active_trade_idx is not None:
-                # 攔截！代表上一單還在掛單中或持倉中
                 df_trades.at[i, '最終結果'] = '無效單 (已有持倉或掛單中)'
                 continue
 
-            # (D) 建立新單並解析效期
+            # 建立新單
             df_trades.at[i, '最終結果'] = '未成交 (掛單中)'
+
             if '直接進場' in action:
-                # 給予 1 小時的判定寬容度
-                df_trades.at[i, '過期時間'] = current_time + timedelta(hours=12) 
+                # 回報後 1 小時才完成「前後各 1 小時」的驗證視窗
+                df_trades.at[i, '過期時間'] = current_time + timedelta(hours=1)
             else:
-                # 動態提取天數 (Regex)
                 match = re.search(r'(\d+)天', action)
-                days = int(match.group(1)) if match else 1 # 防呆預設 1 天
+                days = int(match.group(1)) if match else 1
                 df_trades.at[i, '過期時間'] = current_time + timedelta(days=days)
 
-            active_trade_idx = i # 佔用系統狀態
+            active_trade_idx = i
 
-        # 迴圈結束後，把該參賽者最後一筆有效單推演至市場最新時間
+        # 最後一筆有效單推演到市場最新時間
         if active_trade_idx is not None:
             update_active_trade(active_trade_idx, df_kline.index.max())
 
     return df_trades
 
-
 # ==========================================
 # 4. 核心回測引擎
 # ==========================================
 def run_backtest(df_trades, df_kline):
-    # 建立新欄位存放結果
+    """
+    舊版獨立回測函數。
+    UI 目前使用 run_comprehensive_backtest()，
+    但這裡同步套用相同的直接進場驗證規則。
+    """
     df_trades['實際進場時間'] = pd.NaT
     df_trades['實際離場時間'] = pd.NaT
-    df_trades['最終結果'] = df_trades['系統狀態'] # 預設繼承撤單狀態
-    
+    df_trades['最終結果'] = df_trades['系統狀態']
+
     for i, row in df_trades.iterrows():
-        if row['系統狀態'] != '待處理': continue # 已經被撤單或非待處理的直接跳過
-            
+        if row['系統狀態'] != '待處理':
+            continue
+
         record_time = row['時間戳記']
         entry_price = float(row['進場價位'])
         sl = float(row['停損'])
         tp = float(row['停利'])
         direction = str(row['多/ 空']).strip()
         action_type = str(row['直接進場/預掛價格/撤單'])
-        
+
         actual_entry = None
         actual_exit = None
         result = "未成交 (掛單中)"
-        
-        # 1. 找進場點
+
+        # 1. 找 / 驗證進場點
         if '直接進場' in action_type:
-            # 簡化邏輯：直接進場就以當下 K 線時間為準
-            closest_kline_time = df_kline[df_kline.index >= record_time].index.min()
-            actual_entry = closest_kline_time if pd.notnull(closest_kline_time) else record_time
+            validation_start = record_time - timedelta(hours=1)
+            validation_end = record_time + timedelta(hours=1)
+
+            validation_klines = df_kline[
+                (df_kline.index >= validation_start) &
+                (df_kline.index <= validation_end)
+            ].dropna(subset=['low', 'high'])
+
+            price_touched = any(
+                k['low'] <= entry_price <= k['high']
+                for _, k in validation_klines.iterrows()
+            )
+
+            if price_touched:
+                actual_entry = record_time
+            else:
+                result = '未成交 (直接進場前後1小時未觸價)'
+
         else:
-            # 預掛單：往後找觸碰點
-            future_klines = df_kline[df_kline.index >= record_time]
+            future_klines = df_kline[
+                df_kline.index >= record_time
+            ].dropna(subset=['low', 'high'])
+
             for t, k in future_klines.iterrows():
                 if k['low'] <= entry_price <= k['high']:
                     actual_entry = t
                     break
-        
-        # 2. 找離場點 (如果有進場)
+
+        # 2. 找離場點
         if actual_entry is not None:
             result = "持倉中"
-            # 從進場的下一根 K 線開始找停損停利
-            exit_klines = df_kline[df_kline.index > actual_entry]
+
+            exit_klines = df_kline[
+                df_kline.index > actual_entry
+            ].dropna(subset=['low', 'high'])
+
             for t, k in exit_klines.iterrows():
                 hit_sl, hit_tp = False, False
+
                 if '空' in direction:
-                    if k['high'] >= sl: hit_sl = True
-                    if k['low'] <= tp: hit_tp = True
+                    if k['high'] >= sl:
+                        hit_sl = True
+                    if k['low'] <= tp:
+                        hit_tp = True
+
                 elif '多' in direction:
-                    if k['low'] <= sl: hit_sl = True
-                    if k['high'] >= tp: hit_tp = True
-                
+                    if k['low'] <= sl:
+                        hit_sl = True
+                    if k['high'] >= tp:
+                        hit_tp = True
+
                 if hit_sl or hit_tp:
                     actual_exit = t
-                    if hit_sl and hit_tp: result = '負 (插針雙殺算停損)' # 保守估計
-                    elif hit_sl: result = '負 (停損/SL)'
-                    elif hit_tp: result = '勝 (停利/TP)'
+
+                    if hit_sl and hit_tp:
+                        result = '負 (插針雙殺算停損)'
+                    elif hit_sl:
+                        result = '負 (停損/SL)'
+                    elif hit_tp:
+                        result = '勝 (停利/TP)'
+
                     break
 
         df_trades.at[i, '實際進場時間'] = actual_entry
         df_trades.at[i, '實際離場時間'] = actual_exit
         df_trades.at[i, '最終結果'] = result
-        
+
     return df_trades
 
 # ==========================================

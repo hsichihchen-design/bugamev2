@@ -17,11 +17,8 @@ st.set_page_config(
 )
 
 # Google Sheets CSV 網址
-GOOGLE_SHEET_CSV_URL = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vTXKr7zhxm9ghhZnBKiX0WaUlHtXDd4ros3uIFjKHrf88ojtxxmc2klc0s5x2JD_QhgNHbnu7PEwCO3/"
-    "pub?gid=1677608980&single=true&output=csv"
-)
+GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTXKr7zhxm9ghhZnBKiX0WaUlHtXDd4ros3uIFjKHrf88ojtxxmc2klc0s5x2JD_QhgNHbnu7PEwCO3/pub?gid=1677608980&single=true&output=csv"
+
 
 # 幣安 USDⓈ-M 永續合約市場資料
 BINANCE_FUTURES_BASE_URL = "https://fapi.binance.com"
